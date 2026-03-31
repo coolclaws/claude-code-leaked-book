@@ -1,0 +1,54 @@
+import{_ as a,o as l,c as n,ag as i}from"./chunks/framework.CvgP6Fyv.js";const h=JSON.parse('{"title":"第 19 章 Skills 系统","description":"","frontmatter":{},"headers":[],"relativePath":"chapters/19-skills.md","filePath":"chapters/19-skills.md"}'),p={name:"chapters/19-skills.md"};function e(t,s,o,k,d,c){return l(),n("div",null,[...s[0]||(s[0]=[i(`<h1 id="第-19-章-skills-系统" tabindex="-1">第 19 章 Skills 系统 <a class="header-anchor" href="#第-19-章-skills-系统" aria-label="Permalink to &quot;第 19 章 Skills 系统&quot;">​</a></h1><blockquote><p>&quot;Tell me and I forget, teach me and I may remember, involve me and I learn.&quot; — Benjamin Franklin</p></blockquote><p>Claude Code 的工具系统解决了&quot;能做什么&quot;的问题，而 Skills 系统解决的是&quot;怎么做&quot;的问题。一个 Skill 本质上是一段预定义的指令——它告诉模型在特定场景下应该遵循怎样的流程、使用哪些工具、注意哪些约束。如果说工具是手术刀，那么 Skill 就是手术方案。</p><p>本章将剖析 Skills 的定义格式、发现机制、执行流程，以及它与 MCP prompts 的集成方式。</p><h2 id="_19-1-skill-的定义格式" tabindex="-1">19.1 Skill 的定义格式 <a class="header-anchor" href="#_19-1-skill-的定义格式" aria-label="Permalink to &quot;19.1 Skill 的定义格式&quot;">​</a></h2><p>Skill 采用 Markdown 文件作为载体，通过 YAML frontmatter 提供元数据。这个设计选择既让 Skill 易于编写和版本控制，又保留了结构化元数据的能力：</p><div class="language-markdown vp-adaptive-theme"><button title="Copy Code" class="copy"></button><span class="lang">markdown</span><pre class="shiki shiki-themes github-light github-dark vp-code" tabindex="0"><code><span class="line"><span style="--shiki-light:#005CC5;--shiki-light-font-weight:bold;--shiki-dark:#79B8FF;--shiki-dark-font-weight:bold;">---</span></span>
+<span class="line"><span style="--shiki-light:#24292E;--shiki-dark:#E1E4E8;">name: deploy-staging</span></span>
+<span class="line"><span style="--shiki-light:#24292E;--shiki-dark:#E1E4E8;">description: Deploy current branch to staging environment</span></span>
+<span class="line"><span style="--shiki-light:#005CC5;--shiki-light-font-weight:bold;--shiki-dark:#79B8FF;--shiki-dark-font-weight:bold;">---</span></span>
+<span class="line"></span>
+<span class="line"><span style="--shiki-light:#005CC5;--shiki-light-font-weight:bold;--shiki-dark:#79B8FF;--shiki-dark-font-weight:bold;">## Steps</span></span>
+<span class="line"></span>
+<span class="line"><span style="--shiki-light:#E36209;--shiki-dark:#FFAB70;">1.</span><span style="--shiki-light:#24292E;--shiki-dark:#E1E4E8;"> Run tests to ensure all pass</span></span>
+<span class="line"><span style="--shiki-light:#E36209;--shiki-dark:#FFAB70;">2.</span><span style="--shiki-light:#24292E;--shiki-dark:#E1E4E8;"> Build the project with staging configuration</span></span>
+<span class="line"><span style="--shiki-light:#E36209;--shiki-dark:#FFAB70;">3.</span><span style="--shiki-light:#24292E;--shiki-dark:#E1E4E8;"> Deploy to staging server using the deploy script</span></span>
+<span class="line"><span style="--shiki-light:#E36209;--shiki-dark:#FFAB70;">4.</span><span style="--shiki-light:#24292E;--shiki-dark:#E1E4E8;"> Verify deployment health check endpoint</span></span>
+<span class="line"></span>
+<span class="line"><span style="--shiki-light:#005CC5;--shiki-light-font-weight:bold;--shiki-dark:#79B8FF;--shiki-dark-font-weight:bold;">## Notes</span></span>
+<span class="line"></span>
+<span class="line"><span style="--shiki-light:#E36209;--shiki-dark:#FFAB70;">-</span><span style="--shiki-light:#24292E;--shiki-dark:#E1E4E8;"> Always check git status before deploying</span></span>
+<span class="line"><span style="--shiki-light:#E36209;--shiki-dark:#FFAB70;">-</span><span style="--shiki-light:#24292E;--shiki-dark:#E1E4E8;"> Never deploy uncommitted changes</span></span></code></pre></div><p>frontmatter 中的 <code>name</code> 字段决定了 Skill 的调用名称——用户输入 <code>/deploy-staging</code> 或模型通过 SkillTool 传入该名称即可触发。<code>description</code> 提供一句话描述，用于搜索匹配和用户提示。</p><p>Markdown 正文部分就是注入给模型的指令内容。这里没有特殊的模板语法或变量替换——纯粹的自然语言指令。模型收到这些指令后，会像执行用户请求一样遵循其中的步骤。这种&quot;指令即代码&quot;的设计极其简洁，任何能写 Markdown 的人都能创建 Skill。</p><h2 id="_19-2-skill-的四个来源" tabindex="-1">19.2 Skill 的四个来源 <a class="header-anchor" href="#_19-2-skill-的四个来源" aria-label="Permalink to &quot;19.2 Skill 的四个来源&quot;">​</a></h2><p>Skills 可以从四个来源加载，优先级和适用范围各不相同：</p><div class="language- vp-adaptive-theme"><button title="Copy Code" class="copy"></button><span class="lang"></span><pre class="shiki shiki-themes github-light github-dark vp-code" tabindex="0"><code><span class="line"><span>Skill 来源与优先级</span></span>
+<span class="line"><span>+------------------------------------------------------+</span></span>
+<span class="line"><span>|  来源          | 路径                    | 适用范围   |</span></span>
+<span class="line"><span>|----------------|-------------------------|------------|</span></span>
+<span class="line"><span>|  Bundled       | src/skills/bundled/     | 全局内置   |</span></span>
+<span class="line"><span>|  User          | ~/.claude/skills/       | 用户级     |</span></span>
+<span class="line"><span>|  Project       | .claude/skills/         | 项目级     |</span></span>
+<span class="line"><span>|  MCP Prompts   | MCP 服务器动态提供      | 动态       |</span></span>
+<span class="line"><span>+------------------------------------------------------+</span></span></code></pre></div><p><strong>Bundled Skills</strong> 是随 Claude Code 一起发布的内置技能。它们位于 <code>src/skills/bundled/</code> 目录下，覆盖了最常见的开发场景——代码审查、提交规范、测试策略等。这些 Skill 经过精心调优，代表了 Anthropic 团队认为的最佳实践。</p><p><strong>User Skills</strong> 存放在 <code>~/.claude/skills/</code> 目录，是用户个人的技能库。它们跨项目生效，适合存放与个人工作习惯相关的通用技能——比如特定的代码风格偏好、常用的调试流程等。</p><p><strong>Project Skills</strong> 位于项目根目录的 <code>.claude/skills/</code> 下，随项目代码一起版本控制。团队成员共享同一套项目级 Skill，确保一致的工作流程。这是团队知识沉淀的理想场所——部署流程、代码规范、架构决策等都可以编码为 Skill。</p><p><strong>MCP Prompt Skills</strong> 是最动态的一种来源。MCP 服务器除了暴露工具和资源外，还可以暴露 prompts。<code>src/skills/mcpSkillBuilders.ts</code> 负责将 MCP prompts 转换为标准的 Skill 格式，使它们在用户体验上与本地 Skill 无异。</p><h2 id="_19-3-skill-发现与加载" tabindex="-1">19.3 Skill 发现与加载 <a class="header-anchor" href="#_19-3-skill-发现与加载" aria-label="Permalink to &quot;19.3 Skill 发现与加载&quot;">​</a></h2><p>Skill 的发现过程由 <code>src/skills/loadSkillsDir.ts</code> 驱动，这个约 34KB 的文件实现了两个核心函数。</p><p><code>discoverSkillDirsForPaths()</code> 负责扫描指定路径下的 Skill 目录。它会递归遍历目录结构，找到所有 <code>.md</code> 文件，解析 frontmatter 提取元数据，建立名称到文件路径的映射。</p><p><code>activateConditionalSkillsForPaths()</code> 处理条件激活逻辑。并非所有发现的 Skill 都会立即可用——某些 Skill 可能附带激活条件，例如仅在特定编程语言的项目中生效，或仅在检测到特定配置文件时激活。这种条件机制避免了工具列表的无限膨胀：一个 Python 项目不需要看到 Rust 专用的 Skill。</p><p>搜索能力由 <code>src/services/skillSearch/localSearch.ts</code> 提供。当 Skill 数量较多时，用户可能不记得确切的名称，搜索功能允许通过关键词模糊匹配。值得注意的是，高级搜索发现功能由特性门控 <code>EXPERIMENTAL_SKILL_SEARCH</code> 控制，这意味着该功能仍处于实验阶段，未来可能引入语义搜索等更智能的匹配算法。</p><h2 id="_19-4-skilltool-执行入口" tabindex="-1">19.4 SkillTool：执行入口 <a class="header-anchor" href="#_19-4-skilltool-执行入口" aria-label="Permalink to &quot;19.4 SkillTool：执行入口&quot;">​</a></h2><p>SkillTool（<code>src/tools/SkillTool/SkillTool.ts</code>）是 Skill 系统面向模型的接口。它的设计非常直接——接收 Skill 名称和可选参数，返回 Skill 的执行结果。</p><div class="language- vp-adaptive-theme"><button title="Copy Code" class="copy"></button><span class="lang"></span><pre class="shiki shiki-themes github-light github-dark vp-code" tabindex="0"><code><span class="line"><span>用户输入 &quot;/deploy-staging&quot; 或模型调用 SkillTool</span></span>
+<span class="line"><span>  |</span></span>
+<span class="line"><span>  +-- 解析 Skill 名称</span></span>
+<span class="line"><span>  |</span></span>
+<span class="line"><span>  +-- 查找 Skill 定义</span></span>
+<span class="line"><span>  |     |</span></span>
+<span class="line"><span>  |     +-- 1. 检查 Bundled Skills</span></span>
+<span class="line"><span>  |     |     +-- 命中？→ 加载 Skill 内容</span></span>
+<span class="line"><span>  |     |</span></span>
+<span class="line"><span>  |     +-- 2. 检查 Project Skills (.claude/skills/)</span></span>
+<span class="line"><span>  |     |     +-- 命中？→ 加载 Skill 内容</span></span>
+<span class="line"><span>  |     |</span></span>
+<span class="line"><span>  |     +-- 3. 检查 User Skills (~/.claude/skills/)</span></span>
+<span class="line"><span>  |     |     +-- 命中？→ 加载 Skill 内容</span></span>
+<span class="line"><span>  |     |</span></span>
+<span class="line"><span>  |     +-- 4. 检查 MCP Prompt Skills</span></span>
+<span class="line"><span>  |     |     +-- 命中？→ 从 MCP 服务器获取 prompt 内容</span></span>
+<span class="line"><span>  |     |</span></span>
+<span class="line"><span>  |     +-- 未找到？→ 返回错误</span></span>
+<span class="line"><span>  |</span></span>
+<span class="line"><span>  +-- 解析 Markdown 文件</span></span>
+<span class="line"><span>  |     +-- 提取 frontmatter 元数据</span></span>
+<span class="line"><span>  |     +-- 提取正文内容</span></span>
+<span class="line"><span>  |</span></span>
+<span class="line"><span>  +-- 将 Skill 内容注入对话</span></span>
+<span class="line"><span>  |     +-- 作为系统级指令插入</span></span>
+<span class="line"><span>  |     +-- 模型在后续响应中遵循指令</span></span>
+<span class="line"><span>  |</span></span>
+<span class="line"><span>  +-- 模型根据 Skill 指令执行操作</span></span>
+<span class="line"><span>        +-- 调用相关工具（Bash, FileWrite 等）</span></span>
+<span class="line"><span>        +-- 遵循 Skill 中定义的步骤和约束</span></span></code></pre></div><p>Skill 的执行并不像普通工具那样有明确的&quot;返回值&quot;。Skill 的效果是改变了模型的行为模式——注入的指令成为模型后续推理的上下文。这是一种元工具（meta-tool）的设计：它不直接产生输出，而是影响其他工具的使用方式。</p><h2 id="_19-5-与命令系统的集成" tabindex="-1">19.5 与命令系统的集成 <a class="header-anchor" href="#_19-5-与命令系统的集成" aria-label="Permalink to &quot;19.5 与命令系统的集成&quot;">​</a></h2><p>Skills 与 Claude Code 的斜杠命令系统深度集成。在 <code>commands.ts</code> 中，<code>getSlashCommandToolSkills</code> 函数将所有可用的 Skill 注册为斜杠命令。这意味着用户在输入 <code>/</code> 时，会看到一个包含内置命令和 Skill 的统一列表，二者的使用体验完全一致。</p><p>这种集成的巧妙之处在于：用户不需要知道某个命令是&quot;内置&quot;的还是&quot;Skill 提供&quot;的。<code>/commit</code> 可能是内置命令，<code>/deploy-staging</code> 可能是项目 Skill，<code>/review-pr</code> 可能来自 MCP 服务器——在用户看来它们都是同等的能力。</p><p>同时，这也意味着 Skill 的命名空间与内置命令共享。如果一个 Skill 的名称与内置命令冲突，内置命令优先。这是一个合理的默认策略——防止用户或第三方 Skill 意外覆盖核心功能。</p><h2 id="_19-6-设计考量-为什么是-markdown" tabindex="-1">19.6 设计考量：为什么是 Markdown <a class="header-anchor" href="#_19-6-设计考量-为什么是-markdown" aria-label="Permalink to &quot;19.6 设计考量：为什么是 Markdown&quot;">​</a></h2><p>选择 Markdown 作为 Skill 格式而非 JSON、YAML 或自定义 DSL，背后有几个关键考虑。</p><p>首先是可读性。Skill 的主体是给模型的自然语言指令，Markdown 本身就是为可读的结构化文本而设计的。在 Markdown 文件中编写给模型的指令，读起来就像在写一封给同事的工作说明。</p><p>其次是工具链兼容性。Markdown 文件可以在任何编辑器中编辑、在 GitHub 上直接渲染、在 PR review 中清晰展示。团队成员审查一个新的 Skill 就像审查一份文档，门槛极低。</p><p>最后是扩展性。frontmatter 提供了结构化元数据的扩展点，未来可以轻松添加新的元数据字段（如 <code>requires</code>、<code>version</code>、<code>tags</code>）而无需改变文件格式。</p><h2 id="本章小结" tabindex="-1">本章小结 <a class="header-anchor" href="#本章小结" aria-label="Permalink to &quot;本章小结&quot;">​</a></h2><p>Skills 系统为 Claude Code 提供了一种轻量级的行为编程机制。通过 Markdown 文件定义指令、四层来源覆盖从内置到动态的全部场景、SkillTool 作为统一的执行入口、与斜杠命令系统的无缝集成——这些组合构成了一个让用户和团队能够持续积累和共享工作流知识的框架。Skill 的本质不是代码，而是经验的编码化：将&quot;怎么做&quot;变成可复用、可版本控制、可共享的资产。</p>`,36)])])}const S=a(p,[["render",e]]);export{h as __pageData,S as default};
